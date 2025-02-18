@@ -3,6 +3,8 @@ import re
 import numpy as np
 from PIL import Image
 from .annotation import output_xml, read_xml
+from datetime import datetime
+
 
 """
 .. module:: streamlit_img_label
@@ -75,13 +77,11 @@ class ImageManager:
         return resized_img
 
     def _resize_rect(self, rect):
-        resized_rect = {}
+        resized_rect = rect
         resized_rect["left"] = rect["left"] / self._resized_ratio_w
         resized_rect["width"] = rect["width"] / self._resized_ratio_w
         resized_rect["top"] = rect["top"] / self._resized_ratio_h
         resized_rect["height"] = rect["height"] / self._resized_ratio_h
-        if "label" in rect:
-            resized_rect["label"] = rect["label"]
         return resized_rect
 
     def get_resized_rects(self):
@@ -113,7 +113,16 @@ class ImageManager:
         label = ""
         if "label" in rect:
             label = rect["label"]
-        return (Image.fromarray(prev_img), label)
+        if "user" in rect:
+            user = rect["user"]
+        else:
+            user = ""
+        if "time" in rect:
+            time = rect['time']
+        else:
+            time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+        return [Image.fromarray(prev_img), label, user, time]
 
     def init_annotation(self, rects):
         """init annotation for current rects.
@@ -126,19 +135,27 @@ class ImageManager:
         self._current_rects = rects
         return [self._chop_box_img(rect) for rect in self._current_rects]
 
-    def set_annotation(self, index, label):
+    def set_annotation(self, index, label, user, time):
         """set the label of the image.
 
         Args:
             index(int): the index of the list of bounding boxes of the image.
             label(str): the label of the bounding box
         """
-        self._current_rects[index]["label"] = label
+        if self._current_rects[index]["label"] != label:
+            self._current_rects[index]["label"] = label
+            self._current_rects[index]["user"] = user  # Store user information
+            self._current_rects[index]["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
-    def save_annotation(self):
+    def save_annotation(self, user):
         """output the xml annotation file."""
         output_xml(self._filename, self._img, self._current_rects)
-
+    
+    def set_reply(self,index,user,reply,j):
+        if j<len(self._current_rects[index]["reply"]):
+            self._current_rects[index]["reply"][j]["reply"] = reply
+        else:
+            self._current_rects[index]["reply"].append({"user":user,"reply":reply})
 
 class ImageDirManager:
     def __init__(self, dir_name):
@@ -148,7 +165,7 @@ class ImageDirManager:
 
     def get_all_files(self, allow_types=["png", "jpg", "jpeg"]):
         allow_types += [i.upper() for i in allow_types]
-        mask = ".*\.[" + "|".join(allow_types) + "]"
+        mask = r".*\.(?:" + "|".join(allow_types) + ")$"
         self._files = [
             file for file in os.listdir(self._dir_name) if re.match(mask, file)
         ]
