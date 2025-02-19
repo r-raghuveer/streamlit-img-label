@@ -93,27 +93,66 @@ const StreamlitImgLabel = (props: ComponentProps) => {
   // Returns a promise that resolves to a new bounding box defined by two mouse clicks.
   const defaultBox = () => {
     return new Promise<{ left: number; top: number; width: number; height: number }>((resolve) => {
-      let firstPoint: fabric.Point | null = null
+        let firstPoint: fabric.Point | null = null;
+        let rect: fabric.Rect | null = null;
 
-      const handleCanvasClick = (options: fabric.IEvent) => {
-        if (!canvas) return
-        const pointer = canvas.getPointer(options.e)
-        if (!firstPoint) {
-          firstPoint = new fabric.Point(pointer.x, pointer.y)
-        } else {
-          canvas.off("mouse:down", handleCanvasClick)
-          const secondPoint = new fabric.Point(pointer.x, pointer.y)
-          const left = Math.min(firstPoint.x, secondPoint.x)
-          const top = Math.min(firstPoint.y, secondPoint.y)
-          const width = Math.abs(firstPoint.x - secondPoint.x)
-          const height = Math.abs(firstPoint.y - secondPoint.y)
-          resolve({ left, top, width, height })
-        }
-      }
+        const handleMouseDown = (options: fabric.IEvent) => {
+            if (!canvas) return; // Check if canvas is null
+            const pointer = canvas.getPointer(options.e);
+            firstPoint = new fabric.Point(pointer.x, pointer.y);
+            
+            // Create a rectangle that will be updated as the mouse is dragged
+            rect = new fabric.Rect({
+                left: firstPoint.x,
+                top: firstPoint.y,
+                fill: 'rgba(255, 255, 255, 0.3)',
+                stroke: 'blue',
+                strokeWidth: 2,
+                selectable: false,
+                evented: false,
+            });
+            canvas.add(rect);
+        };
 
-      canvas?.on("mouse:down", handleCanvasClick)
-    })
-  }
+        const handleMouseMove = (options: fabric.IEvent) => {
+            if (!firstPoint || !rect || !canvas) return; // Check if canvas is null
+            const pointer = canvas.getPointer(options.e);
+            const left = Math.min(firstPoint.x, pointer.x);
+            const top = Math.min(firstPoint.y, pointer.y);
+            const width = Math.abs(firstPoint.x - pointer.x);
+            const height = Math.abs(firstPoint.y - pointer.y);
+
+            // Update the rectangle's dimensions
+            rect.set({ left, top, width, height });
+            rect.setCoords();
+            canvas.renderAll();
+        };
+
+        const handleMouseUp = () => {
+            if (!firstPoint || !rect || !canvas) return; // Check if canvas is null
+            // Resolve the promise with the dimensions
+            const left = rect.left ?? 0; // Default to 0 if undefined
+            const top = rect.top ?? 0; // Default to 0 if undefined
+            const width = rect.width ?? 0; // Default to 0 if undefined
+            const height = rect.height ?? 0; // Default to 0 if undefined
+
+            // Clean up
+            canvas.off("mouse:move", handleMouseMove);
+            canvas.off("mouse:up", handleMouseUp);
+            canvas.remove(rect);
+            resolve({ left, top, width, height });
+
+            // Reset points
+            firstPoint = null;
+            rect = null;
+        };
+
+        // Attach event listeners
+        canvas?.on("mouse:down", handleMouseDown);
+        canvas?.on("mouse:move", handleMouseMove);
+        canvas?.on("mouse:up", handleMouseUp);
+    });
+};
 
   // Add a new bounding box to the image.
   const addBoxHandler = async () => {
@@ -242,25 +281,19 @@ const StreamlitImgLabel = (props: ComponentProps) => {
           className={mode === "dark" ? styles.dark : ""}
           onClick={addBoxHandler}
         >
-          Add bounding box
+          Add Grounded Comment
         </button>
         <button
           className={mode === "dark" ? styles.dark : ""}
           onClick={removeBoxHandler}
         >
-          Remove select
+          Remove selected bbox
         </button>
         <button
           className={mode === "dark" ? styles.dark : ""}
           onClick={resetHandler}
         >
-          Reset
-        </button>
-        <button
-          className={mode === "dark" ? styles.dark : ""}
-          onClick={clearHandler}
-        >
-          Clear all
+          Reset to previous save
         </button>
       </div>
     </>
