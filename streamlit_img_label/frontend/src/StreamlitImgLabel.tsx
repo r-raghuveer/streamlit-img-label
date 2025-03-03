@@ -7,12 +7,25 @@ import {
 import { fabric } from "fabric"
 import styles from "./StreamlitImgLabel.module.css"
 
+interface Reply {
+  user: string
+  reply: string
+  time: string
+}
+
+interface Label {
+  comment: string
+  time: string
+  user: string
+  replies: Reply[]
+}
+
 interface RectProps {
   top: number
   left: number
   width: number
   height: number
-  label: string
+  label: Label
 }
 
 interface PythonArgs {
@@ -25,15 +38,16 @@ interface PythonArgs {
 
 const StreamlitImgLabel = (props: ComponentProps) => {
   const [mode, setMode] = useState<string>("light")
-  const [labels, setLabels] = useState<string[]>([])
+  // Store labels using a unique id for each bounding box.
+  const [labels, setLabels] = useState<{ [key: number]: Label }>({})
   const [canvas, setCanvas] = useState<fabric.Canvas | null>(null)
-  const { canvasWidth, canvasHeight, imageData }: PythonArgs = props.args
+  const { canvasWidth, canvasHeight, imageData } = props.args as PythonArgs
+  // newBBoxIndex is used to generate a unique id for new boxes.
   const [newBBoxIndex, setNewBBoxIndex] = useState<number>(0)
 
   // Create an invisible canvas to convert the Python image data into a Data URI.
   const invisCanvas = document.createElement("canvas")
   const ctx = invisCanvas.getContext("2d")
-
   invisCanvas.width = canvasWidth
   invisCanvas.height = canvasHeight
 
@@ -47,13 +61,12 @@ const StreamlitImgLabel = (props: ComponentProps) => {
 
   // Initialize the fabric canvas on mount and add the initial rectangles.
   useEffect(() => {
-    const { rects, boxColor }: PythonArgs = props.args
+    const { rects, boxColor } = props.args as PythonArgs
     const canvasTmp = new fabric.Canvas("c", {
       enableRetinaScaling: false,
       uniScaleTransform: true,
     })
 
-    // Load the background image using fabric.Image.fromURL.
     fabric.Image.fromURL(dataUri, (img) => {
       canvasTmp.setBackgroundImage(
         img,
@@ -65,190 +78,231 @@ const StreamlitImgLabel = (props: ComponentProps) => {
       )
     })
 
-    // Add any pre-existing rectangles.
+    // Use a counter to assign unique ids to pre-existing rectangles.
+    let counter = newBBoxIndex
+    const initialLabels: { [key: number]: Label } = {}
+
     rects.forEach((rect) => {
-      const { top, left, width, height } = rect
-      canvasTmp.add(
-        new fabric.Rect({
-          left,
-          top,
-          fill: "",
-          width,
-          height,
-          objectCaching: true,
-          stroke: boxColor,
-          strokeWidth: 1,
-          strokeUniform: true,
-          hasRotatingPoint: false,
-        })
-      )
-    })
-
-    setLabels(rects.map((rect) => rect.label))
-    setCanvas(canvasTmp)
-    Streamlit.setFrameHeight()
-    // eslint-disable-next-line
-  }, [canvasHeight, canvasWidth, dataUri])
-
-  // Returns a promise that resolves to a new bounding box defined by two mouse clicks.
-  const defaultBox = () => {
-    return new Promise<{ left: number; top: number; width: number; height: number }>((resolve) => {
-        let firstPoint: fabric.Point | null = null;
-        let rect: fabric.Rect | null = null;
-
-        const handleMouseDown = (options: fabric.IEvent) => {
-            if (!canvas) return; // Check if canvas is null
-            const pointer = canvas.getPointer(options.e);
-            firstPoint = new fabric.Point(pointer.x, pointer.y);
-            
-            // Create a rectangle that will be updated as the mouse is dragged
-            rect = new fabric.Rect({
-                left: firstPoint.x,
-                top: firstPoint.y,
-                fill: 'rgba(255, 255, 255, 0.3)',
-                stroke: 'blue',
-                strokeWidth: 2,
-                selectable: false,
-                evented: false,
-            });
-            canvas.add(rect);
-        };
-
-        const handleMouseMove = (options: fabric.IEvent) => {
-            if (!firstPoint || !rect || !canvas) return; // Check if canvas is null
-            const pointer = canvas.getPointer(options.e);
-            const left = Math.min(firstPoint.x, pointer.x);
-            const top = Math.min(firstPoint.y, pointer.y);
-            const width = Math.abs(firstPoint.x - pointer.x);
-            const height = Math.abs(firstPoint.y - pointer.y);
-
-            // Update the rectangle's dimensions
-            rect.set({ left, top, width, height });
-            rect.setCoords();
-            canvas.renderAll();
-        };
-
-        const handleMouseUp = () => {
-            if (!firstPoint || !rect || !canvas) return; // Check if canvas is null
-            // Resolve the promise with the dimensions
-            const left = rect.left ?? 0; // Default to 0 if undefined
-            const top = rect.top ?? 0; // Default to 0 if undefined
-            const width = rect.width ?? 0; // Default to 0 if undefined
-            const height = rect.height ?? 0; // Default to 0 if undefined
-
-            // Clean up
-            canvas.off("mouse:move", handleMouseMove);
-            canvas.off("mouse:up", handleMouseUp);
-            canvas.remove(rect);
-            resolve({ left, top, width, height });
-
-            // Reset points
-            firstPoint = null;
-            rect = null;
-        };
-
-        // Attach event listeners
-        canvas?.on("mouse:down", handleMouseDown);
-        canvas?.on("mouse:move", handleMouseMove);
-        canvas?.on("mouse:up", handleMouseUp);
-    });
-};
-
-  // Add a new bounding box to the image.
-  const addBoxHandler = async () => {
-    if (!canvas) return
-    const box = await defaultBox()
-    setNewBBoxIndex((prev) => prev + 1)
-    canvas.add(
-      new fabric.Rect({
-        left: box.left,
-        top: box.top,
-        width: box.width,
-        height: box.height,
+      const { top, left, width, height, label } = rect
+      const rectObj = new fabric.Rect({
+        left,
+        top,
         fill: "",
+        width,
+        height,
         objectCaching: true,
-        stroke: props.args.boxColor,
+        stroke: boxColor, // now boxColor is defined from props.args
         strokeWidth: 1,
         strokeUniform: true,
         hasRotatingPoint: false,
-      })
+      });
+      
+      // Attach a unique id.
+      (rectObj as any).customId = counter;
+      
+      canvasTmp.add(rectObj)
+      initialLabels[counter] = label
+      counter++
+    })
+
+    setNewBBoxIndex(counter)
+    setLabels(initialLabels)
+    setCanvas(canvasTmp)
+    Streamlit.setFrameHeight()
+  }, [canvasHeight, canvasWidth, dataUri])
+
+  // Create a box by letting the user draw a rectangle.
+  const defaultBox = () =>
+    new Promise<{ left: number; top: number; width: number; height: number }>(
+      (resolve) => {
+        let firstPoint: fabric.Point | null = null
+        let rect: fabric.Rect | null = null
+
+        const handleMouseDown = (options: fabric.IEvent) => {
+          if (!canvas) return
+          const pointer = canvas.getPointer(options.e)
+          firstPoint = new fabric.Point(pointer.x, pointer.y)
+          rect = new fabric.Rect({
+            left: firstPoint.x,
+            top: firstPoint.y,
+            fill: "rgba(255, 255, 255, 0.3)",
+            stroke: "blue",
+            strokeWidth: 2,
+            selectable: false,
+            evented: false,
+          })
+          canvas.add(rect)
+        }
+
+        const handleMouseMove = (options: fabric.IEvent) => {
+          if (!firstPoint || !rect || !canvas) return
+          const pointer = canvas.getPointer(options.e)
+          const left = Math.min(firstPoint.x, pointer.x)
+          const top = Math.min(firstPoint.y, pointer.y)
+          const width = Math.abs(firstPoint.x - pointer.x)
+          const height = Math.abs(firstPoint.y - pointer.y)
+          rect.set({ left, top, width, height })
+          rect.setCoords()
+          canvas.renderAll()
+        }
+
+        const handleMouseUp = () => {
+          if (!firstPoint || !rect || !canvas) return
+          const left = rect.left ?? 0
+          const top = rect.top ?? 0
+          const width = rect.width ?? 0
+          const height = rect.height ?? 0
+          // Remove all event listeners including the mouse:down listener.
+          canvas.off("mouse:down", handleMouseDown)
+          canvas.off("mouse:move", handleMouseMove)
+          canvas.off("mouse:up", handleMouseUp)
+          // Remove the temporary drawn rect.
+          canvas.remove(rect)
+          resolve({ left, top, width, height })
+          firstPoint = null
+          rect = null
+        }
+
+        canvas?.on("mouse:down", handleMouseDown)
+        canvas?.on("mouse:move", handleMouseMove)
+        canvas?.on("mouse:up", handleMouseUp)
+      }
     )
-    sendCoordinates([...labels, ""])
+
+  // Send updated coordinates and associated labels back to Python.
+  // Two fixes here:
+  // 1. We update each object’s coordinates with setCoords()
+  // 2. The event listener cleanup in the drawing logic avoids extra temporary objects.
+  const sendCoordinates = () => {
+    if (!canvas) return
+    canvas.getObjects().forEach((obj) => obj.setCoords())
+    const rects = canvas.getObjects().map((obj) => {
+      const customId = (obj as any).customId
+      return {
+        ...obj.getBoundingRect(),
+        label:
+          labels[customId] || { comment: "", time: "", user: "", replies: [] },
+      }
+    })
+    Streamlit.setComponentValue({ rects })
   }
 
-  // Remove the selected bounding box.
+  // Handler to add a new bounding box.
+  const addBoxHandler = async () => {
+    if (!canvas) return
+    const box = await defaultBox()
+    const current_time = new Date().toISOString()
+    const newLabel: Label = {
+      comment: "",
+      time: current_time,
+      user: "you",
+      replies: [],
+    }
+
+    const rectObj = new fabric.Rect({
+      left: box.left,
+      top: box.top,
+      width: box.width,
+      height: box.height,
+      fill: "",
+      objectCaching: true,
+      stroke: (props.args as PythonArgs).boxColor,
+      strokeWidth: 1,
+      strokeUniform: true,
+      hasRotatingPoint: false,
+    })
+    // Attach a unique custom id to the new rectangle.
+    ;(rectObj as any).customId = newBBoxIndex
+    canvas.add(rectObj)
+
+    setLabels((prev) => ({
+      ...prev,
+      [newBBoxIndex]: newLabel,
+    }))
+    setNewBBoxIndex((prev) => prev + 1)
+    sendCoordinates()
+  }
+
+  // Handler to remove the selected bounding box.
   const removeBoxHandler = () => {
     if (!canvas) return
     const selectObject = canvas.getActiveObject()
     if (!selectObject) return
-    const selectIndex = canvas.getObjects().indexOf(selectObject)
+
+    // Ensure at least one label remains.
+    if (Object.keys(labels).length < 2) {
+      alert("At least one label must remain. Cannot remove the last label.")
+      return
+    }
+
+    // Use the unique custom id of the selected object.
+    const customId = (selectObject as any).customId
     canvas.remove(selectObject)
-    const newLabels = labels.filter((label, i) => i !== selectIndex)
-    sendCoordinates(newLabels)
+
+    const newLabels = { ...labels }
+    delete newLabels[customId]
+    setLabels(newLabels)
+    sendCoordinates()
   }
 
-  // Reset the bounding boxes to the original ones.
+  // Reset to the rectangles provided by Python.
   const resetHandler = () => {
     if (!canvas) return
     clearHandler()
-    const { rects, boxColor }: PythonArgs = props.args
+    const { rects, boxColor } = props.args as PythonArgs
+    let counter = newBBoxIndex
+    const newLabels: { [key: number]: Label } = {}
     rects.forEach((rect) => {
-      const { top, left, width, height } = rect
-      canvas.add(
-        new fabric.Rect({
-          left,
-          top,
-          fill: "",
-          width,
-          height,
-          objectCaching: true,
-          stroke: boxColor,
-          strokeWidth: 1,
-          strokeUniform: true,
-          hasRotatingPoint: false,
-        })
-      )
+      const { top, left, width, height, label } = rect
+      const rectObj = new fabric.Rect({
+        left,
+        top,
+        fill: "",
+        width,
+        height,
+        objectCaching: true,
+        stroke: boxColor,
+        strokeWidth: 1,
+        strokeUniform: true,
+        hasRotatingPoint: false,
+      })
+      ;(rectObj as any).customId = counter
+      canvas.add(rectObj)
+      newLabels[counter] = label
+      counter++
     })
-    sendCoordinates(labels)
+    setNewBBoxIndex(counter)
+    setLabels(newLabels)
+    sendCoordinates()
   }
 
-  // Remove all bounding boxes.
+  // Clear all bounding boxes and labels.
   const clearHandler = () => {
     if (!canvas) return
     setNewBBoxIndex(0)
     canvas.getObjects().forEach((obj) => {
       canvas.remove(obj)
     })
-    sendCoordinates([])
+    setLabels({})
+    sendCoordinates()
   }
 
-  // Send the coordinates of the rectangles back to Streamlit.
-  const sendCoordinates = (returnLabels: string[]) => {
-    setLabels(returnLabels)
-    if (!canvas) return
-    const rects = canvas.getObjects().map((obj, i) => ({
-      ...obj.getBoundingRect(),
-      label: returnLabels[i] || "",
-    }))
-    Streamlit.setComponentValue({ rects })
-  }
-
-  // Update bounding boxes when they are modified.
+  // Listen for modifications on objects so we can update coordinates.
   useEffect(() => {
     if (!canvas) return
 
-    const handleEvent = () => {
+    const handleModified = () => {
       canvas.renderAll()
-      sendCoordinates(labels)
+      sendCoordinates()
     }
 
-    canvas.on("object:modified", handleEvent)
+    canvas.on("object:modified", handleModified)
     return () => {
-      canvas.off("object:modified", handleEvent)
+      canvas.off("object:modified", handleModified)
     }
   }, [canvas, labels])
 
-  // Adjust the theme based on the system setting.
+  // Toggle UI mode.
   const onSelectMode = (mode: string) => {
     setMode(mode)
     if (mode === "dark") document.body.classList.add("dark-mode")
@@ -257,12 +311,10 @@ const StreamlitImgLabel = (props: ComponentProps) => {
 
   useEffect(() => {
     const darkModeMediaQuery = window.matchMedia("(prefers-color-scheme: dark)")
-    const handleDarkModeChange = (e: MediaQueryListEvent) => onSelectMode(e.matches ? "dark" : "light")
+    const handleDarkModeChange = (e: MediaQueryListEvent) =>
+      onSelectMode(e.matches ? "dark" : "light")
     darkModeMediaQuery.addEventListener("change", handleDarkModeChange)
-
-    // Set the initial mode.
     onSelectMode(darkModeMediaQuery.matches ? "dark" : "light")
-
     return () => {
       darkModeMediaQuery.removeEventListener("change", handleDarkModeChange)
     }
@@ -277,22 +329,13 @@ const StreamlitImgLabel = (props: ComponentProps) => {
         height={canvasHeight}
       />
       <div className={mode === "dark" ? styles.dark : ""}>
-        <button
-          className={mode === "dark" ? styles.dark : ""}
-          onClick={addBoxHandler}
-        >
+        <button className={mode === "dark" ? styles.dark : ""} onClick={addBoxHandler}>
           Add Grounded Comment
         </button>
-        <button
-          className={mode === "dark" ? styles.dark : ""}
-          onClick={removeBoxHandler}
-        >
+        <button className={mode === "dark" ? styles.dark : ""} onClick={removeBoxHandler}>
           Remove selected bbox
         </button>
-        <button
-          className={mode === "dark" ? styles.dark : ""}
-          onClick={resetHandler}
-        >
+        <button className={mode === "dark" ? styles.dark : ""} onClick={resetHandler}>
           Reset to previous save
         </button>
       </div>

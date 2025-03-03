@@ -4,14 +4,8 @@ import numpy as np
 from PIL import Image
 from .annotation import output_xml, read_xml
 from datetime import datetime
-
-
-"""
-.. module:: streamlit_img_label
-   :synopsis: manage.
-.. moduleauthor:: Tianning Li <ltianningli@gmail.com>
-"""
-
+import threading
+from collections import deque
 
 class ImageManager:
     """ImageManager
@@ -29,11 +23,13 @@ class ImageManager:
         self._load_rects()
         self._resized_ratio_w = 1
         self._resized_ratio_h = 1
+        self._write_queue = deque()  # Queue to store pending writes
+        self._write_event = threading.Event()  # Event to trigger write operations
+        self._write_thread = threading.Thread(target=self._process_queue, daemon=True)
+        self._write_thread.start()
 
     def _load_rects(self):
-        rects_xml = read_xml(self._filename)
-        if rects_xml:
-            self._rects = rects_xml
+        self._rects = read_xml(self._filename)
 
     def get_img(self):
         """get the image object
@@ -110,19 +106,17 @@ class ImageManager:
             top : top + height, left : left + width
         ]
         prev_img = prev_img[top : top + height, left : left + width]
-        label = ""
-        if "label" in rect:
-            label = rect["label"]
-        if "user" in rect:
-            user = rect["user"]
-        else:
-            user = ""
-        if "time" in rect:
-            time = rect['time']
+        if rect['label']['time']:
+            time = rect['label']['time']
         else:
             time = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        if rect['label']['user']!= 'You':
+            user = rect['label']['user']
+        else:
+            user = "You"
+        comments =  rect['label']['comment']
 
-        return [Image.fromarray(prev_img), label, user, time]
+        return [Image.fromarray(prev_img), comments, user, time]
 
     def init_annotation(self, rects):
         """init annotation for current rects.
@@ -135,27 +129,45 @@ class ImageManager:
         self._current_rects = rects
         return [self._chop_box_img(rect) for rect in self._current_rects]
 
+    def _queue_write(self,rects):
+        """Enqueues a write operation and triggers the event."""
+        self._write_queue.append(rects)
+        self._write_event.set()  # Notify the background thread
+
+    def _process_queue(self):
+        """Background thread that processes write operations."""
+        while True:
+            self._write_event.wait()  # Wait until an event is triggered
+            
+            while self._write_queue:   
+                rects = self._write_queue.pop() # Get the next write operation
+                self._execute_write(rects)
+
+            self._write_event.clear()  # Reset event after processing
+
+    def _execute_write(self, rects):
+        """Executes a write operation (e.g., saving annotation data)."""
+        output_xml(self._filename, rects)
+
     def set_annotation(self, index, label, user, time):
-        """set the label of the image.
+        """Sets an annotation and queues a write operation."""
+        print("entering set_comment",label)
+        if self._current_rects[index]["label"]["comment"] != label:
+            self._current_rects[index]["label"]["comment"] = label
+            self._current_rects[index]["label"]["user"] = user
+            self._current_rects[index]["label"]["time"] = time
+        print("exiting set_comment",label)
 
-        Args:
-            index(int): the index of the list of bounding boxes of the image.
-            label(str): the label of the bounding box
-        """
-        if self._current_rects[index]["label"] != label:
-            self._current_rects[index]["label"] = label
-            self._current_rects[index]["user"] = user  # Store user information
-            self._current_rects[index]["time"] = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+    def save_annotation(self):
+        self._queue_write(self._current_rects)
+        print(self._write_queue)
 
-    def save_annotation(self, user):
-        """output the xml annotation file."""
-        output_xml(self._filename, self._img, self._current_rects)
-    
-    def set_reply(self,index,user,reply,j):
-        if j<len(self._current_rects[index]["reply"]):
-            self._current_rects[index]["reply"][j]["reply"] = reply
+    def set_reply(self, index, user, reply, j):
+        """Adds a reply and queues a write operation."""
+        if j < len(self._current_rects[index]["label"]["reply"]):
+            self._current_rects[index]["label"]["reply"][j] = reply
         else:
-            self._current_rects[index]["reply"].append({"user":user,"reply":reply})
+            self._current_rects[index]["label"]["reply"].append({"user": user, "reply": reply})
 
 class ImageDirManager:
     def __init__(self, dir_name):

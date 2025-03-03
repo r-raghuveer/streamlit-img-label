@@ -30,7 +30,7 @@ def read_xml(img_file):
     
     return required_format
 
-def output_xml(img_file, img, rects):
+def output_xml(img_file, rects):
     """Save the annotations in a JSON file, updating annotations and their replies.
 
     Args:
@@ -60,15 +60,15 @@ def output_xml(img_file, img, rects):
     data_to_be_removed = []
 
     for rect in rects:
-        user = rect["user"]
+        user = rect['label']["user"]
         if user not in existing_data[file_name]:
             existing_data[file_name][user] = []
 
         # Convert list of dicts to sets of tuples (excluding replies for comparison)
-        existing_rects = {tuple(sorted({k: v for k, v in d.items() if k != "reply"}.items())) 
+        existing_rects = {tuple(sorted({k: v for k, v in d['label'].items() if k != "replies"}.items())) 
                           for d in existing_data[file_name][user]}
         
-        rect_tuple = tuple(sorted({k: v for k, v in rect.items() if k != "reply"}.items()))
+        rect_tuple = tuple(sorted({k: v for k, v in rect['label'].items() if k != "replies"}.items()))
 
         # Check if annotation already exists
         if rect_tuple not in existing_rects:
@@ -77,20 +77,20 @@ def output_xml(img_file, img, rects):
         else:
             # If annotation exists, update its replies
             for existing_rect in existing_data[file_name][user]:
-                if {k: v for k, v in existing_rect.items() if k != "reply"} == \
-                   {k: v for k, v in rect.items() if k != "reply"}:
+                if {k: v for k, v in existing_rect['label'].items() if k != "replies"} == \
+                   {k: v for k, v in rect['label'].items() if k != "replies"}:
                     
                     # Compare replies and update if different
-                    if existing_rect["reply"] != rect["reply"]:
-                        existing_rect["reply"] = rect["reply"]
-                        change = True  # Mark change detected
-
+                        if existing_rect["label"]["replies"] != rect["label"]["replies"]:
+                            existing_rect["label"]["replies"] = rect["label"]["replies"]
+                            change = True
+ # Mark change detected
     # Check for removed annotations
     for user, user_rects in existing_data[file_name].items():
-        existing_rects = {tuple(sorted({k: v for k, v in d.items() if k != "reply"}.items())) 
+        existing_rects = {tuple(sorted({k: v for k, v in d['label'].items() if k != "replies"}.items())) 
                           for d in user_rects}
-        new_rects = {tuple(sorted({k: v for k, v in r.items() if k != "reply"}.items())) 
-                     for r in rects if r["user"] == user}
+        new_rects = {tuple(sorted({k: v for k, v in r['label'].items() if k != "replies"}.items())) 
+                     for r in rects if r['label']["user"] == user}
 
         removed_rects = existing_rects - new_rects  # Anything in existing but not in new is deleted
         if removed_rects:
@@ -99,16 +99,20 @@ def output_xml(img_file, img, rects):
 
             # Remove deleted annotations from the existing data
             existing_data[file_name][user] = [
-                d for d in user_rects if tuple(sorted({k: v for k, v in d.items() if k != "reply"}.items())) not in removed_rects
+                d for d in user_rects if tuple(sorted({k: v for k, v in d['label'].items() if k != "replies"}.items())) not in removed_rects
             ]
 
     if not change:
         print("No changes detected.")
         return
 
-    # Add new annotations (including replies)
     if data_to_be_added:
-        existing_data[file_name][rects[0]["user"]].extend(data_to_be_added)
+        for rect in data_to_be_added:
+            user = rect['label']["user"]
+            if user not in existing_data[file_name]:
+                existing_data[file_name][user] = []
+            existing_data[file_name][user].append(rect)
+
 
     # Save updated JSON
     with open(json_path, "w", encoding="utf-8") as json_file:
