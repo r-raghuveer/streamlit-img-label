@@ -15,21 +15,17 @@ class ImageManager:
         filename(str): the image file.
     """
 
-    def __init__(self, filename):
+    def __init__(self, filename, project, master_task, task, datasets, models):
         """initiate module"""
         self._filename = filename
         self._img = Image.open(filename)
         self._rects = []
-        self._load_rects()
+        self._load_rects(project, master_task, task, datasets, models)
         self._resized_ratio_w = 1
         self._resized_ratio_h = 1
-        self._write_queue = deque()  # Queue to store pending writes
-        self._write_event = threading.Event()  # Event to trigger write operations
-        self._write_thread = threading.Thread(target=self._process_queue, daemon=True)
-        self._write_thread.start()
 
-    def _load_rects(self):
-        self._rects = read_xml(self._filename)
+    def _load_rects(self, project, master_task, task, datasets, models):
+        self._rects = read_xml(self._filename, project, master_task, task, datasets, models)
 
     def get_img(self):
         """get the image object
@@ -129,26 +125,6 @@ class ImageManager:
         self._current_rects = rects
         return [self._chop_box_img(rect) for rect in self._current_rects]
 
-    def _queue_write(self,rects):
-        """Enqueues a write operation and triggers the event."""
-        self._write_queue.append(rects)
-        self._write_event.set()  # Notify the background thread
-
-    def _process_queue(self):
-        """Background thread that processes write operations."""
-        while True:
-            self._write_event.wait()  # Wait until an event is triggered
-            
-            while self._write_queue:   
-                rects = self._write_queue.pop() # Get the next write operation
-                self._execute_write(rects)
-
-            self._write_event.clear()  # Reset event after processing
-
-    def _execute_write(self, rects):
-        """Executes a write operation (e.g., saving annotation data)."""
-        output_xml(self._filename, rects)
-
     def set_annotation(self, index, label, user, time):
         """Sets an annotation and queues a write operation."""
         print("entering set_comment",label)
@@ -158,9 +134,8 @@ class ImageManager:
             self._current_rects[index]["label"]["time"] = time
         print("exiting set_comment",label)
 
-    def save_annotation(self):
-        self._queue_write(self._current_rects)
-        print(self._write_queue)
+    def save_annotation(self, project, master_task, task, datasets, models):
+        output_xml(self._filename, self._current_rects, project, master_task, task, datasets, models)
 
     def set_reply(self, index, user, reply, j):
         """Adds a reply and queues a write operation."""
